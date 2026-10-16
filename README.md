@@ -1,24 +1,24 @@
-# subsong — субтитры для песенных видео
+# subsong — subtitles for song videos
 
-CLI, который превращает видео с песней (mp4/mkv/webm/mov + mp3/wav) в субтитры
-**с таймингами по словам**: обычный SRT, караоке-ASS, WebVTT и подробный JSON.
+A CLI that turns a song video (mp4/mkv/webm/mov + mp3/wav) into subtitles
+**with word-level timing**: plain SRT, karaoke ASS, WebVTT and a detailed JSON.
 
-Стек взят из [sherpa-onnx-russian-lab](https://github.com/akret00/sherpa-onnx-russian-lab)
-(sherpa-onnx, Silero VAD, GigaAM v3) и доведён до задачи «спеть текст поверх минусовки»:
+The stack comes from [sherpa-onnx-russian-lab](https://github.com/akret00/sherpa-onnx-russian-lab)
+(sherpa-onnx, Silero VAD, GigaAM v3), adapted to the harder problem of *singing over a backing track*:
 
-* **CTC forced alignment** — текст и тайминги слов считаются из одного прогона ONNX,
-  поэтому подсветка караоке идёт по настоящим звукам, а не «на глаз»;
-* **готовый текст песни** (LRC или plain txt) используется как подсказка — это самый
-  точный режим: слову не нужно угадывать, его нужно только положить на звук;
-* **отсев мусора по уверенности** — на инструментале модель выдумывает правдоподобный
-  текст, но с низкой лог-вероятностью; такие реплики отбрасываются;
-* **выделение вокала и шумоподавление** — опционально, моделями sherpa-onnx (без torch).
+* **CTC forced alignment** — the text and the word timings come from a single ONNX pass,
+  so the karaoke highlight follows real sounds instead of a guess;
+* **existing lyrics** (LRC or plain txt) are used as a hint — the most accurate mode:
+  the words don't need to be guessed, they only need to be laid onto the audio;
+* **confidence-based filtering** — on instrumentals the model invents plausible lyrics,
+  but with a low log-probability; such cues are dropped;
+* **vocal separation and denoising** — optional, via sherpa-onnx models (no torch).
 
-Только CPU, без torch, librosa и облака. Python 3.10+.
+CPU only, no torch, no librosa, no cloud. Python 3.10+.
 
 ---
 
-## Установка
+## Install
 
 ```bash
 python -m venv .venv
@@ -26,160 +26,161 @@ python -m venv .venv
 pip install -e .
 ```
 
-Нужен **ffmpeg** в PATH (или `ffmpeg.exe` рядом, в папке `bin` проекта):
+**ffmpeg** must be in PATH (or drop `ffmpeg.exe` into the project's `bin/` folder):
 <https://ffmpeg.org/download.html>.
 
-## Модели
+## Models
 
-Скачиваются автоматически при первом запуске (в каталог `models/` или `$SUBSONG_MODELS`):
-
-```bash
-subsong models list                       # что доступно и что уже скачано
-subsong models download gigaam-v3-ru      # GigaAM v3 CTC (~215 МБ) - основная модель
-subsong models download silero-vad        # детектор речи (~1 МБ)
-subsong models download spleeter-2stems   # выделение вокала из минусовки (~50 МБ), опционально
-subsong models download gtcrn              # шумоподавление (~1 МБ), опционально
-subsong selfcheck                          # проверка ffmpeg, моделей и ONNX
-```
-
-## Быстрый старт
+Downloaded automatically on first run (into `models/` or `$SUBSONG_MODELS`):
 
 ```bash
-subsong song.mp4                            # -> song.srt и song.ass
-subsong song.mp4 --formats srt,ass,vtt,json # все форматы сразу
-subsong song.mp4 --lyrics words.lrc         # субтитры по готовому тексту песни
-subsong song.mp4 -o subs/ru --uppercase     # свои имена и караоке-регистр
+subsong models list                       # what's available and what's already installed
+subsong models download gigaam-v3-ru      # GigaAM v3 CTC (~215 MB) - the default ASR model
+subsong models download silero-vad        # speech detector (~1 MB)
+subsong models download spleeter-2stems   # vocal separation (~50 MB), optional
+subsong models download gtcrn              # denoising (~1 MB), optional
+subsong selfcheck                          # verify ffmpeg, models and ONNX
 ```
 
-### Режим 1. Только распознавание (текста нет)
-
-```
-видео -> ffmpeg -> Silero VAD -> GigaAM CTC -> фильтр мусора -> сборка реплик -> SRT/ASS
-```
-
-Демо-песня (вокал + минусовка, 23 c, 6 строк припева) даёт **WER 0.12**:
-все шесть строк попадают в субтитры, а инструментальные вступление и финал — нет.
-
-### Режим 2. Есть текст песни (точный)
+## Quick start
 
 ```bash
-subsong song.mp4 --lyrics words.lrc   # таймкоды LRC: строки выравниваются по своим окнам
-subsong song.mp4 --lyrics words.txt   # без таймкодов: текст распределяется по сегментам
+subsong song.mp4                            # -> song.srt and song.ass
+subsong song.mp4 --formats srt,ass,vtt,json # every format at once
+subsong song.mp4 --lyrics words.lrc         # subtitles from existing lyrics
+subsong song.mp4 -o subs/ru --uppercase     # custom names, karaoke-style caps
 ```
 
-На том же демо режим LRC даёт **WER 0.00** и среднюю ошибку времени слова **0.18 c** —
-это уровень, достаточный для караоке.
-
-Если слов угадать нечем, а текст есть, подскажите `--lyrics`: инструментал и шум
-больше не мешают, а модель не выдумывает слова. Для `.txt` без таймкодов текст
-раскладывается по речевым сегментам, поэтому границы реплик получаются грубее —
-для точного караоке нужен LRC с таймкодами.
-
-## Как это устроено
+### Mode 1. Recognition only (no lyrics available)
 
 ```
-ffmpeg ──► 16 кГц моно PCM
-              │
-              ├─ (опционально) Spleeter/UVR: выделение вокала
-              ├─ (опционально) GTCRN: шумоподавление
-              │
-         Silero VAD ──► речевые отрезки (склейка, разрезание, подрезка тишины)
-              │
-         GigaAM v3 CTC (onnxruntime) ──► log_probs
-              ├─► жадное декодирование ──► текст
-              └─► forced alignment (Витерби) ──► время каждого слова + уверенность
-              │
-         фильтры: уверенность, повторы, энергия, спектральный music-гейт
-              │
-         сборка реплик (длина, скорость чтения, границы строк)
-              │
-         SRT / ASS (караоке \k) / VTT / JSON
+video -> ffmpeg -> Silero VAD -> GigaAM CTC -> junk filter -> cue assembly -> SRT/ASS
 ```
 
-Ключевая идея — **уверенность из forced alignment**. Мы считаем среднюю
-лог-вероятность всего пути выравнивания (учитывая и blank-кадры). На живом вокале
-она около нуля и выше, а на инструментале модель выдумывает слова с уверенностью
-около `-4` и ниже — такие реплики отбрасываются автоматически.
+On the demo track (vocal + backing track, 23 s, 6 chorus lines) this gives **WER 0.12**:
+all six lines make it into the subtitles, while the instrumental intro and outro do not.
 
-## Важные опции
+### Mode 2. Lyrics available (the accurate mode)
 
-### Качество распознавания
+```bash
+subsong song.mp4 --lyrics words.lrc   # LRC with timestamps: each line aligns to its own window
+subsong song.mp4 --lyrics words.txt   # no timestamps: text is distributed over speech segments
+```
 
-| Опция | Что делает |
+On the same demo, LRC mode gives **WER 0.00** and a mean word timing error of **0.18 s** —
+enough for karaoke.
+
+When the model has nothing to guess but you do have the words, pass `--lyrics`: instrumentals
+and noise stop interfering, and the model no longer invents words. For a `.txt` without
+timestamps the text is spread across speech segments, so cue boundaries come out coarser —
+accurate karaoke needs LRC with timestamps.
+
+## How it works
+
+```
+ffmpeg ──► 16 kHz mono PCM
+              │
+              ├─ (optional) Spleeter/UVR: vocal separation
+              ├─ (optional) GTCRN: denoising
+              │
+          Silero VAD ──► speech segments (merge, split, trim silence)
+              │
+          GigaAM v3 CTC (onnxruntime) ──► log_probs
+              ├─► greedy decoding ──► text
+              └─► forced alignment (Viterbi) ──► time of every word + confidence
+              │
+          filters: confidence, repetition, energy, spectral music gate
+              │
+          cue assembly (length, reading speed, line boundaries)
+              │
+          SRT / ASS (karaoke \k) / VTT / JSON
+```
+
+The key idea is **confidence from forced alignment**. We take the mean log-probability of
+the entire alignment path (blank frames included). On live vocals it sits near zero and above;
+on instrumentals the model invents words at around `-4` and below — those cues are dropped
+automatically.
+
+## Important options
+
+### Recognition quality
+
+| Option | What it does |
 |---|---|
-| `--lyrics ФАЙЛ` | подсказка с текстом песни (LRC или txt) — самый точный путь |
-| `--separate` | выделить вокал из минусовки (Spleeter/UVR, скачается автоматически) |
-| `--denoise` | шумоподавление GTCRN (для шумных полевых записей) |
-| `--min-confidence -3` | строже отсекать сомнительные реплики (по умолчанию `-4.0`, `-99` — выключить) |
-| `--max-repeat 3` | выбрасывать зацикленные куски текста |
-| `--music-gate 1` | дополнительный спектральный отсев инструментала |
-| `--vad-threshold 0.5` | поднять порог VAD, если реплики сливаются (по умолчанию 0.35 — для песен он лучше) |
-| `--normalize rms` | выровнять громкость (для тихих записей) |
-| `--no-align` | быстрый режим без выравнивания (слова распределяются равномерно) |
+| `--lyrics FILE` | hint with the song text (LRC or txt) — the most accurate path |
+| `--separate` | extract vocals from the backing track (Spleeter/UVR, downloaded automatically) |
+| `--denoise` | GTCRN denoising (for noisy field recordings) |
+| `--min-confidence -3` | drop doubtful cues more aggressively (default `-4.0`, `-99` disables) |
+| `--max-repeat 3` | drop looping chunks of text |
+| `--music-gate 1` | extra spectral filtering of instrumentals |
+| `--vad-threshold 0.5` | raise the VAD threshold if cues merge together (default 0.35 works better for songs) |
+| `--normalize rms` | level the loudness (useful for quiet recordings) |
+| `--no-align` | fast mode without forced alignment (words are spread evenly) |
 
-> `--separate` на синтетической минусовке может не сработать; subsong это проверяет
-> и пишет предупреждение, продолжая с исходным миксом, а не выдаёт пустой результат.
+> `--separate` can fail on a synthetic backing track; subsong detects this and prints a
+> warning, then continues with the original mix instead of returning an empty result.
 
-### Стиль субтитров
+### Subtitle style
 
-| Опция | По умолчанию | Что делает |
+| Option | Default | What it does |
 |---|---|---|
-| `--max-chars` | 42 | символов в строке |
-| `--max-lines` | 2 | строк в реплике |
-| `--max-duration` | 7.0 | секунд на реплику |
-| `--min-duration` | 1.0 | минимальная длительность, чтобы не мелькало |
-| `--max-cps` | 20.0 | символов в секунду |
-| `--min-gap` | 0.08 | пауза между репликами, с |
-| `--lead-in` / `--lead-out` | 0.0 / 0.2 | сдвиг и «хвост» реплики |
-| `--uppercase` | выкл | ВЕРХНИЙ РЕГИСТР |
+| `--max-chars` | 42 | characters per line |
+| `--max-lines` | 2 | lines per cue |
+| `--max-duration` | 7.0 | seconds per cue |
+| `--min-duration` | 1.0 | minimum on-screen time, so cues don't flash |
+| `--max-cps` | 20.0 | characters per second |
+| `--min-gap` | 0.08 | pause between cues, s |
+| `--lead-in` / `--lead-out` | 0.0 / 0.2 | shift and "tail" of a cue |
+| `--uppercase` | off | UPPERCASE |
 
-Полный список: `subsong transcribe --help`. Значения можно вынести в YAML:
-`cp config.yaml.sample subsong.yaml` и `subsong song.mp4 --config subsong.yaml`.
+Full list: `subsong transcribe --help`. Values can also live in YAML:
+`cp config.yaml.sample subsong.yaml` and `subsong song.mp4 --config subsong.yaml`.
 
-### Модели
+### Models
 
-| Пресет | Назначение |
+| Preset | Purpose |
 |---|---|
-| `gigaam-v3-ru` | CTC-модель по умолчанию: русский, с пунктуацией, даёт выравнивание слов |
-| `gigaam-v3-ru-tensor` | transducer-версия: точнее на шуме, но без выравнивания слов |
-| `qwen3-0.6b` | многоязычный ASR (распознаёт, но слова распределяются равномерно) |
-| `silero-vad` | детектор речи |
-| `spleeter-2stems`, `uvr-main` | выделение вокала |
-| `gtcrn` | шумоподавление |
+| `gigaam-v3-ru` | default CTC model: Russian, with punctuation, supports word alignment |
+| `gigaam-v3-ru-tensor` | transducer version: better on noise, no word alignment |
+| `qwen3-0.6b` | multilingual ASR (recognises, but words are spread evenly) |
+| `silero-vad` | speech detector |
+| `spleeter-2stems`, `uvr-main` | vocal separation |
+| `gtcrn` | denoising |
 
-Свою модель можно указать напрямую: `subsong song.mp4 --asr-model /path/to/model_dir`.
+You can point at your own model directory:
+`subsong song.mp4 --asr-model /path/to/model_dir`.
 
-## Форматы вывода
+## Output formats
 
-* **SRT** — обычные субтитры;
-* **ASS** — караоке: теги `\k` подсвечивают каждое слово по мере пения
-  (проверено: длительность слова в центрисекундах берётся из выравнивания);
-* **VTT** — для веба, с шапкой `NOTE` об источнике;
-* **JSON** — реплики, слова, времена, logprob каждого слова и метаданные;
-* **TXT** — таймкод + текст, удобно вычитывать.
+* **SRT** — plain subtitles;
+* **ASS** — karaoke: `\k` tags highlight each word as it is sung
+  (verified: the per-word duration in centiseconds comes from the alignment);
+* **VTT** — for the web, with a `NOTE` header about the source;
+* **JSON** — cues, words, times, per-word logprob and metadata;
+* **TXT** — timecode + text, handy for proofreading.
 
-## Тесты и демо
+## Tests and demo
 
 ```bash
-python tools/make_demo_song.py --out demo   # синтезирует демо-песню (Piper + минусовка)
-python tools/eval_demo.py                    # WER и точность таймингов по вариантам запуска
-python -m pytest -q                          # 68 тестов
-python -m mypy                               # строгая типизация
-python -m pylint src/subsong                 # стиль кода
+python tools/make_demo_song.py --out demo   # synthesise the demo song (Piper + backing track)
+python tools/eval_demo.py                    # WER and timing accuracy per run configuration
+python -m pytest -q                          # 68 tests
+python -m mypy                               # strict typing
+python -m pylint src/subsong                 # code style
 ```
 
-Демо-песня собирается из синтеза вокала (Piper `ru_RU-irina`) и сгенерированной
-numpy-минусовки, поэтому не требует чужих прав на музыку.
+The demo song is built from synthesised vocals (Piper `ru_RU-irina`) and a numpy-generated
+backing track, so it needs no third-party music rights.
 
-## Ограничения
+## Limitations
 
-* Основная модель — русский GigaAM: для других языков нужен `qwen3-0.6b`,
-  но тогда тайминги слов распределяются равномерно (без выравнивания).
-* На настоящем пении распознавание хуже, чем на речи: растянутые гласные,
-  мелодические подъёмы и плотная минусовка. Режим `--lyrics` это лечит.
-* Спектральный music-гейт — эвристика; основную работу по отсеву инструментала
-  делает порог уверенности.
+* The default model is Russian GigaAM: for other languages use `qwen3-0.6b`, but then word
+  timings are spread evenly (no alignment).
+* On real singing recognition is worse than on speech: drawn-out vowels, melodic rises and
+  a dense backing track. `--lyrics` is the cure.
+* The spectral music gate is a heuristic; the confidence threshold does the heavy lifting
+  when filtering out instrumentals.
 
-## Лицензия
+## License
 
-MIT, см. [LICENSE](LICENSE). Лицензии моделей — в их репозиториях.
+MIT, see [LICENSE](LICENSE). The models keep their own licenses.
