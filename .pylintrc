@@ -1,0 +1,27 @@
+[MAIN]
+ignore-paths=^tests/.*$
+
+[FORMAT]
+max-line-length=125
+
+# CLI перехватывает любые исключения, чтобы показать пользователю текст ошибки,
+# а не traceback - это осознанное решение.
+[BROAD-EXCEPTION-CAUGHT]
+ignore=Exception
+
+[MESSAGES CONTROL]
+disable=
+    missing-module-docstring,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-locals,
+    too-many-instance-attributes,
+    too-many-return-statements,
+    too-few-public-methods,
+    duplicate-code,
+    import-outside-toplevel,
+    fixme
+
+[DESIGN]
+max-args=8
+max-attributes=12

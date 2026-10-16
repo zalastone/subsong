@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "subsong"
+version = "0.1.0"
+description = "Generate karaoke-grade subtitles for sung videos: VAD + sherpa-onnx ASR + CTC forced alignment -> SRT/ASS/VTT/JSON"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "subsong contributors" }]
+keywords = ["subtitles", "srt", "karaoke", "lyrics", "asr", "sherpa-onnx", "russian", "singing"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "sherpa-onnx>=1.12",
+    "numpy>=1.24",
+    "onnxruntime>=1.16",
+]
+
+[project.optional-dependencies]
+config = ["pyyaml>=6.0"]
+dev = ["pytest>=7.4", "mypy>=1.8", "pylint>=3.0", "types-PyYAML"]
+
+[project.scripts]
+subsong = "subsong.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/akret00/sherpa-onnx-russian-lab"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/subsong"]
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["sherpa_onnx.*", "yaml.*", "onnxruntime.*"]
+ignore_missing_imports = true

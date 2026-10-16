@@ -1,0 +1,36 @@
+# Кэш и модели
+models/
+tmp/
+*.part
+*.tar.bz2
+
+# Результаты
+results/
+*.srt
+*.ass
+*.vtt
+*.json
+*.txt
+!tests/**/*.txt
+!demo/lyrics*.txt
+
+# Демо-песня генерируется скриптом
+demo/song.wav
+demo/song.mp4
+demo/eval/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
