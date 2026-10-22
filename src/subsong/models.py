@@ -32,6 +32,7 @@ class ModelSpec:
     alignable: bool = False
     language: str = ""
     note: str = ""
+    hf_repo: str | None = None  # Hugging Face repo id (e.g., "thieunv/sherpa-onnx-qwen3-asr-1.7B-int8")
 
 
 # Пресеты, которые знает CLI. Пути указаны относительно каталога модели.
@@ -68,7 +69,27 @@ PRESETS: dict[str, ModelSpec] = {
         feature_dim=128,
         alignable=False,
         language="multilingual",
-        note="Qwen3-ASR 0.6B, многоязычный, медленнее",
+        note="Qwen3-ASR 0.6B, многоязычный, быстрее",
+    ),
+    "qwen3-1.7b": ModelSpec(
+        name="qwen3-1.7b",
+        url="",  # not used when hf_repo is set
+        kind="asr",
+        archive=False,
+        files={
+            "conv_frontend": "conv_frontend.onnx",
+            "encoder": "encoder.int8.onnx",
+            "decoder": "decoder.int8.onnx",
+            "tokenizer_dir": "tokenizer",
+            "tokenizer/vocab.json": "tokenizer/vocab.json",
+            "tokenizer/merges.txt": "tokenizer/merges.txt",
+            "tokenizer/tokenizer_config.json": "tokenizer/tokenizer_config.json",
+        },
+        feature_dim=128,
+        alignable=False,
+        language="multilingual",
+        note="Qwen3-ASR 1.7B, многоязычный, точнее но медленнее (~2.4 ГБ)",
+        hf_repo="thieunv/sherpa-onnx-qwen3-asr-1.7B-int8",
     ),
     "silero-vad": ModelSpec(
         name="silero-vad",
@@ -106,6 +127,7 @@ PRESET_DIRS = {
     "gigaam-v3-ru": "asr/gigaam-v3-ru",
     "gigaam-v3-ru-tensor": "asr/gigaam-v3-ru-transducer",
     "qwen3-0.6b": "asr/qwen3-0.6b",
+    "qwen3-1.7b": "asr/qwen3-1.7b",
     "silero-vad": "vad/silero-vad",
     "spleeter-2stems": "sep/spleeter-2stems",
     "uvr-main": "sep/uvr-main",
@@ -176,18 +198,47 @@ def ensure_model(name: str, models_dir: Path, log: Logger = _noop, force: bool =
         log(f"Модель '{name}' уже на месте: {target}")
         return target
     target.mkdir(parents=True, exist_ok=True)
-    ext = ".tar.bz2" if spec.archive else Path(spec.url).suffix
-    archive = target / f"{name}{ext}"
-    if force or not archive.is_file():
-        _download(spec.url, archive, log)
-    if spec.archive:
-        _extract(archive, target, log)
-        archive.unlink(missing_ok=True)
+
+    if spec.hf_repo:
+        # Download individual files from Hugging Face Hub
+        _download_hf_repo(spec.hf_repo, spec.files, target, log)
+    else:
+        if spec.archive:
+            ext = ".tar.bz2"
+            archive = target / f"{name}{ext}"
+            if force or not archive.is_file():
+                _download(spec.url, archive, log)
+            _extract(archive, target, log)
+            archive.unlink(missing_ok=True)
+        else:
+            # For direct file downloads, use the actual filename from the URL
+            filename = Path(spec.url).name
+            dest = target / filename
+            if force or not dest.is_file():
+                _download(spec.url, dest, log)
+
     if not model_ready(spec, target):
         raise RuntimeError(
             f"После загрузки '{name}' не найдены файлы {list(spec.files.values())} в {target}"
         )
     return target
+
+
+def _download_hf_repo(hf_repo: str, files: dict[str, str], target_dir: Path, log: Logger) -> None:
+    """Скачивает файлы модели из Hugging Face Hub."""
+    base_url = f"https://huggingface.co/{hf_repo}/resolve/main"
+    for logical_name, rel_path in files.items():
+        # Skip directory entries (e.g., tokenizer_dir -> tokenizer/)
+        if rel_path.endswith("/") or "." not in rel_path.split("/")[-1]:
+            target_dir.joinpath(rel_path).mkdir(parents=True, exist_ok=True)
+            continue
+        file_url = f"{base_url}/{rel_path}"
+        dest = target_dir / rel_path
+        if dest.exists():
+            log(f"Файл уже существует: {dest}")
+            continue
+        log(f"Скачиваю {file_url}")
+        _download(file_url, dest, log)
 
 
 def model_ready(spec: ModelSpec, directory: Path) -> bool:
